@@ -405,3 +405,5 @@ void generarReporte(char *reportS, int iPaquetes, int rPaquetes, int uPaquetes, 
     strcat(reportS, numBuf);
     htToString(reportS, ht);
 }
+
+//First partial
