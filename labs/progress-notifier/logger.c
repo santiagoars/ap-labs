@@ -4,6 +4,8 @@
 #include <syslog.h>
 #include <string.h>
 #include "logger.h"
+
+//Finishing
                 
 int loggerType;
 
