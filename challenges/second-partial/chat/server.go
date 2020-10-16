@@ -13,8 +13,8 @@ import (
 	"log"
 	"net"
 	"os"
-	"time"
 	"strings"
+	"time"
 )
 
 //!+broadcaster
@@ -30,7 +30,7 @@ type client struct {
 var (
 	clients  = make(map[clientChan]*client)
 	entering = make(chan client)
-	leaving  = make(chan client)
+	leaving  = make(chan clientChan)
 	messages = make(chan string) // all incoming client messages
 )
 
@@ -89,30 +89,30 @@ func handleConn(conn net.Conn) {
 		ip := conn.RemoteAddr().String()
 		ch <- serverInfo + "Welcome to this simple IRC server"
 		ch <- serverInfo + who + "has logged to the server"
-		messages <- serverInfo +  who + "is a new user"
-		entering <- client{ch, who, ip, conn, false}
+		messages <- serverInfo + who + "is a new user"
+		entering <- client{ch, who, ip, false, conn}
 
 		if clients[ch].admin == true {
 			ch <- serverInfo + "You are the first user in this server!"
 		}
-		
+
 		for input.Scan() {
 			msg := input.Text()
 			if msg != "" {
-				if msg[0] == "/"{
+				if msg[0] == '/' {
 					values := strings.Split(msg, " ")
-					switch values[0]{
+					switch values[0] {
 					case "/time":
-						location,_ := time.LoadLocation("Local")
+						location, _ := time.LoadLocation("Local")
 						loc := location.String()
-						if loc == "Local"{
-							curr,_ := time.LoadLocation("America/MexicoCity")
+						if loc == "Local" {
+							curr, _ := time.LoadLocation("America/MexicoCity")
 							loc = curr.String()
 						}
 						ch <- serverInfo + "The local time is " + loc + " " + time.Now().Format("14:03")
 					case "/users":
 						var user_name string
-						for _,person := range clients{
+						for _, person := range clients {
 							user_name += person.name + ", "
 						}
 						ch <- serverInfo + user_name[:len(user_name)-2]
@@ -120,17 +120,13 @@ func handleConn(conn net.Conn) {
 					case "/user":
 						if len(values) != 2 {
 							ch <- serverInfo + "Wrong parameters"
-						}else {
+						} else {
 							var foundUser = false
-							for _,person := range clients{
+							for _, person := range clients {
 								if person.name == values[1] {
 									foundUser = true
-									person.channel <- serverInfo + "You have been kicked out from the channel"
-									leaving <- person.channel
-									messages <- serverInfo + person.name + "has been kicked from the channel"
-									
-									person.conn.Close()
-									break;
+									ch <- serverInfo + "username: " + person.name + ", IP: " + person.ip
+									break
 								}
 							}
 							if !foundUser {
@@ -140,54 +136,55 @@ func handleConn(conn net.Conn) {
 					case "/msg":
 						if len(values) < 3 {
 							ch <- serverInfo + "Wrong parameters"
-						}else{
+						} else {
 							var foundUser = false
-							for _,p := range clients {
-								if p.name == values[1]{
+							for _, p := range clients {
+								if p.name == values[1] {
 									foundUser = true
 									p.channel <- who + " (direct) > " + msg[6+len(p.name):]
-									break;
+									break
 								}
 							}
-							if !userFound{
+							if !foundUser {
 								ch <- serverInfo + "User not found, sorry"
 							}
 						}
-					case "/kick" :
+					case "/kick":
 						if clients[ch].admin {
-							if len(values) != 2{
+							if len(values) != 2 {
 								ch <- serverInfo + "Wrong parameters"
-							}else {
+							} else {
 								var foundUser = false
-								for _,person := range clients{
-									if person.name == values[1]{
+								for _, person := range clients {
+									if person.name == values[1] {
 										foundUser = true
 										person.channel <- serverInfo + "You've been kicked"
 										leaving <- person.channel
 										messages <- serverInfo + person.name + "has been kicked"
 										person.conn.Close()
-										break;
+										break
 									}
 								}
-								if !userFound{
+								if !foundUser {
 									ch <- serverInfo + "User was not found, try again with an existing user"
 								}
 							}
-						}else {
+						} else {
 							ch <- serverInfo + "You don't have the permissions to kick"
 						}
-					default: 
+					default:
 						ch <- serverInfo + "Command incorrect"
 					}
-				}else{
+				} else {
 					messages <- who + " > " + msg
 				}
+			}
 		}
-	}
-	if clients[ch] != nil{
-		leaving <- ch
-		messages <- serverInfo +  who + "has left the channel"
-		conn.Close()
+		if clients[ch] != nil {
+			leaving <- ch
+			messages <- serverInfo + who + "has left the channel"
+			conn.Close()
+		}
 	}
 }
 
@@ -212,6 +209,6 @@ func main() {
 			log.Print(err)
 			continue
 		}
-		go handleConn()
+		go handleConn(conn)
 	}
 }
