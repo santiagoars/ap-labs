@@ -1,10 +1,3 @@
-// Copyright © 2016 Alan A. A. Donovan & Brian W. Kernighan.
-// License: https://creativecommons.org/licenses/by-nc-sa/4.0/
-
-// See page 254.
-//!+
-
-// Chat is a server that lets clients chat with each other.
 package main
 
 import (
@@ -17,22 +10,23 @@ import (
 	"time"
 )
 
-//!+broadcaster
-type clientChan chan<- string // an outgoing message channel
-type client struct {
-	channel clientChan
-	name    string
-	ip      string
-	admin   bool
-	conn    net.Conn
-}
+type clientChannel chan<- string
 
 var (
-	clients  = make(map[clientChan]*client)
 	entering = make(chan client)
-	leaving  = make(chan clientChan)
-	messages = make(chan string) // all incoming client messages
+	leaving  = make(chan clientChannel)
+	clients  = make(map[clientChannel]*client)
+	messages = make(chan string)
 )
+
+type client struct {
+	channel  clientChannel
+	name     string
+	ip       string
+	conn     net.Conn
+	admin    bool
+	connTime string
+}
 
 func broadcaster() {
 	for {
@@ -42,11 +36,11 @@ func broadcaster() {
 				cli <- msg
 			}
 
-		case clientInfo := <-entering:
+		case clientInformation := <-entering:
 			if len(clients) == 0 {
-				clientInfo.admin = true
+				clientInformation.admin = true
 			}
-			clients[clientInfo.channel] = &clientInfo
+			clients[clientInformation.channel] = &clientInformation
 
 		case cli := <-leaving:
 			delete(clients, cli)
@@ -55,45 +49,34 @@ func broadcaster() {
 	}
 }
 
-func admin(who string, cli clientChan) {
-	fmt.Println(serverInfo + "[" + who + "]" + "now has admin permissions")
-	clients[cli].admin = true
-	cli <- serverInfo + "You are now the server admin!"
-}
-
-func clientChat(conn net.Conn, ch <-chan string) {
-	for msg := range ch {
-		fmt.Println(conn, msg)
-	}
-}
-
-//!-broadcaster
-
-//!+handleConn
 func handleConn(conn net.Conn) {
 	var username = false
+	var connTime = getTimeOfConnection()
 	input := bufio.NewScanner(conn)
 	input.Scan()
 	who := input.Text()
 	for _, person := range clients {
 		if person.name == who {
 			username = true
-			fmt.Println(conn, "Username is taken, choose another one")
+			fmt.Fprintln(conn, "Sorry the username you choosed is already taken, try again")
 			conn.Close()
 			break
 		}
 	}
 	if !username {
 		ch := make(chan string)
-		go clientChat(conn, ch)
+		go chat(conn, ch)
 		ip := conn.RemoteAddr().String()
-		ch <- serverInfo + "Welcome to this simple IRC server"
-		ch <- serverInfo + who + "has logged to the server"
-		messages <- serverInfo + who + "is a new user"
-		entering <- client{ch, who, ip, false, conn}
 
+		ch <- infoServer + "Welcome to the Simple IRC Server"
+		ch <- infoServer + "The user [" + who + "] is succesfully logged"
+		messages <- infoServer + "New user: [" + who + "] has connected to the server"
+		fmt.Println(infoServer + "New user: [" + who + "] has connected to the server")
+
+		entering <- client{ch, who, ip, conn, false, connTime}
 		if clients[ch].admin == true {
-			ch <- serverInfo + "You are the first user in this server!"
+			ch <- infoServer + "Congratulations, you were the first user."
+			makeAdmin(who, ch)
 		}
 
 		for input.Scan() {
@@ -106,36 +89,37 @@ func handleConn(conn net.Conn) {
 						location, _ := time.LoadLocation("Local")
 						loc := location.String()
 						if loc == "Local" {
-							curr, _ := time.LoadLocation("America/MexicoCity")
+							curr, _ := time.LoadLocation("America/Mexico_City")
 							loc = curr.String()
 						}
-						ch <- serverInfo + "The local time is " + loc + " " + time.Now().Format("14:03")
-					case "/users":
-						var user_name string
-						for _, person := range clients {
-							user_name += person.name + ", "
-						}
-						ch <- serverInfo + user_name[:len(user_name)-2]
+						ch <- infoServer + "Local Time: " + loc + " " + time.Now().Format("15:04")
 
+					case "/users":
+						var logInfo string
+						for _, person := range clients {
+							logInfo += person.name + ", " + person.connTime + ", "
+						}
+						ch <- infoServer + logInfo[:len(logInfo)-2]
 					case "/user":
 						if len(values) != 2 {
-							ch <- serverInfo + "Wrong parameters"
+							ch <- infoServer + "Error writting parameters, the correct way isusage: /user <user>"
 						} else {
 							var foundUser = false
 							for _, person := range clients {
 								if person.name == values[1] {
 									foundUser = true
-									ch <- serverInfo + "username: " + person.name + ", IP: " + person.ip
+									ch <- infoServer + "username: " + person.name + ", IP: " + person.ip
+									fmt.Println(infoServer + "User: [" + who + "]")
 									break
 								}
 							}
 							if !foundUser {
-								ch <- serverInfo + "User has not been found inside this server, sorry"
+								ch <- infoServer + "Error, user not found"
 							}
 						}
 					case "/msg":
 						if len(values) < 3 {
-							ch <- serverInfo + "Wrong parameters"
+							ch <- infoServer + "Error parameters not in order, usage: /msg <user> <msg>"
 						} else {
 							var foundUser = false
 							for _, p := range clients {
@@ -146,34 +130,36 @@ func handleConn(conn net.Conn) {
 								}
 							}
 							if !foundUser {
-								ch <- serverInfo + "User not found, sorry"
+								ch <- infoServer + "Error, user not found"
 							}
 						}
 					case "/kick":
 						if clients[ch].admin {
 							if len(values) != 2 {
-								ch <- serverInfo + "Wrong parameters"
+								ch <- infoServer + "Error in parameters, correct parameters: /kick <user>"
 							} else {
 								var foundUser = false
 								for _, person := range clients {
 									if person.name == values[1] {
 										foundUser = true
-										person.channel <- serverInfo + "You've been kicked"
+										person.channel <- infoServer + "You're kicked from this channel"
 										leaving <- person.channel
-										messages <- serverInfo + person.name + "has been kicked"
+										messages <- infoServer + person.name + " has been kicked from channel"
+										fmt.Println(infoServer + person.name + " has been kicked")
+
 										person.conn.Close()
 										break
 									}
 								}
 								if !foundUser {
-									ch <- serverInfo + "User was not found, try again with an existing user"
+									ch <- infoServer + "Error, the user you requested was not found on this Server"
 								}
 							}
 						} else {
-							ch <- serverInfo + "You don't have the permissions to kick"
+							ch <- infoServer + "Error, your user doesn't have the permissions to kisk a user, you need to be the admin"
 						}
 					default:
-						ch <- serverInfo + "Command incorrect"
+						ch <- infoServer + "Error, command not not found"
 					}
 				} else {
 					messages <- who + " > " + msg
@@ -182,27 +168,49 @@ func handleConn(conn net.Conn) {
 		}
 		if clients[ch] != nil {
 			leaving <- ch
-			messages <- serverInfo + who + "has left the channel"
+			messages <- infoServer + "[" + who + "] left the chat"
+			fmt.Println(infoServer + "[" + who + "] left the chat")
+
 			conn.Close()
 		}
 	}
 }
 
-var serverInfo string
+func chat(conn net.Conn, ch <-chan string) {
+	for msg := range ch {
+		fmt.Fprintln(conn, msg)
+	}
+}
+
+func makeAdmin(who string, cli clientChannel) {
+	fmt.Println(infoServer + "[" + who + "] has been promoted as the Admin!")
+	clients[cli].admin = true
+	cli <- infoServer + "You're the new IRC Server Admin!"
+}
+
+func getTimeOfConnection() string {
+	_, err := time.LoadLocation("America/Mexico_City")
+	if err != nil {
+		return infoServer + "Failed loading timezone, try again later. "
+	}
+	return time.Now().Format("2020-01-01 15:04:05")
+}
+
+var infoServer string
 
 func main() {
 	if len(os.Args) != 5 {
-		log.Fatal("Wrong parameters, try again")
+		log.Fatal("Error introducing the parameters the correct way is, usage: go run client.go -host [host] -port [port]")
 	}
-	serverInfo = "irc--server"
+	infoServer = "irc-server> "
 	server := os.Args[2] + ":" + os.Args[4]
 	listener, err := net.Listen("tcp", server)
 	if err != nil {
 		log.Fatal(err)
 	}
-	fmt.Println(serverInfo + "IRC Server started at: " + server)
+	fmt.Println(infoServer + "Simple IRC Server started at " + server)
 	go broadcaster()
-	fmt.Println(serverInfo + "Ready")
+	fmt.Println(infoServer + "Ready for receiving new clients")
 	for {
 		conn, err := listener.Accept()
 		if err != nil {
