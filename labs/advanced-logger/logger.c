@@ -48,6 +48,13 @@ int initLogger(char *logType)
     return 0;
 }
 
+void textcolor(int attr, int fg, int bg)
+{
+    char command[13];
+    sprintf(command, "%c[%d;%d;%dm", 0x1B, attr, fg + 30, bg + 40);
+    printf("%s", command);
+}
+
 int printWithFormat(char *type, int color, const char *format, va_list arg)
 {
     int done;
@@ -56,13 +63,6 @@ int printWithFormat(char *type, int color, const char *format, va_list arg)
     done = vfprintf(stdout, format, arg);
     textcolor(RESET, WHITE, HIDDEN);
     return done;
-}
-
-void textcolor(int attr, int fg, int bg)
-{
-    char command[13];
-    sprintf(command, "%c[%d;%d;%dm", 0x1B, attr, fg + 30, bg + 40);
-    printf("%s", command);
 }
 
 int infof(const char *format, ...)
